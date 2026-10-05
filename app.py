@@ -1,3 +1,4 @@
+import time
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -63,17 +64,28 @@ horizon = st.sidebar.slider(
 def download_stock_data(ticker):
     end_date_download = date.today() + timedelta(days=1)
 
-    data = yf.download(
-        ticker,
-        start="2000-01-01",
-        end=end_date_download.strftime("%Y-%m-%d"),
-        progress=False,
-        auto_adjust=False,
-        threads=False
-    )
+    data = pd.DataFrame()
+
+    for attempt in range(3):
+        try:
+            data = yf.download(
+                ticker,
+                start="2000-01-01",
+                end=end_date_download.strftime("%Y-%m-%d"),
+                progress=False,
+                auto_adjust=False,
+                threads=False
+            )
+        except Exception:
+            data = pd.DataFrame()
+
+        if not data.empty:
+            break
+
+        time.sleep(2 * (attempt + 1))
 
     if data.empty:
-        return pd.DataFrame()
+        raise ValueError(f"Yahoo Finance returned no data for {ticker}.")
 
     if isinstance(data.columns, pd.MultiIndex):
         if "Close" in data.columns.get_level_values(0):
