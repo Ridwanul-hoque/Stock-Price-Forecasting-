@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 from prophet import Prophet
 import matplotlib.pyplot as plt
+from yfinance.exceptions import YFRateLimitError
 
 st.title("Stock Price Forecasting App")
 
@@ -21,51 +22,133 @@ ticker = st.sidebar.selectbox(
     }[x]
 )
 
-start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime("2020-01-01"))
-end_date = st.sidebar.date_input("End Date", value=pd.to_datetime("2024-01-01"))
-horizon = st.sidebar.slider("Forecast Horizon (days)", 7, 120, 90)
+start_date = st.sidebar.date_input(
+    "Start Date",
+    value=pd.to_datetime("2020-01-01")
+)
 
-stock = yf.Ticker(ticker)
-data = stock.history(start=start_date.strftime("%Y-%m-%d"), end=end_date.strftime("%Y-%m-%d"))
+end_date = st.sidebar.date_input(
+    "End Date",
+    value=pd.to_datetime("2024-01-01")
+)
+
+horizon = st.sidebar.slider(
+    "Forecast Horizon (days)",
+    7,
+    120,
+    90
+)
+
+
+@st.cache_data(ttl=3600)
+def get_stock_data(ticker, start_date, end_date):
+    stock = yf.Ticker(ticker)
+
+    return stock.history(
+        start=start_date,
+        end=end_date
+    )
+
+
+try:
+    data = get_stock_data(
+        ticker,
+        start_date.strftime("%Y-%m-%d"),
+        end_date.strftime("%Y-%m-%d")
+    )
+
+except YFRateLimitError:
+    st.error(
+        "Yahoo Finance is currently rate-limiting requests from this app. "
+        "Please try again later."
+    )
+    st.stop()
+
+except Exception as e:
+    st.error(f"Unable to retrieve stock data: {e}")
+    st.stop()
+
 
 if data.empty:
     st.error("No data found for the selected stock and date range.")
     st.stop()
 
-df = pd.DataFrame({'Price': data['Close'].values}, index=data.index)
+
+df = pd.DataFrame(
+    {"Price": data["Close"].values},
+    index=data.index
+)
+
 df = df.dropna()
 
+
 col1, col2, col3 = st.columns(3)
-col1.metric("Current Price", f"${df['Price'].iloc[-1]:.2f}")
-col2.metric("52-Week High", f"${df['Price'].tail(252).max():.2f}")
-col3.metric("52-Week Low", f"${df['Price'].tail(252).min():.2f}")
+
+col1.metric(
+    "Current Price",
+    f"${df['Price'].iloc[-1]:.2f}"
+)
+
+col2.metric(
+    "52-Week High",
+    f"${df['Price'].tail(252).max():.2f}"
+)
+
+col3.metric(
+    "52-Week Low",
+    f"${df['Price'].tail(252).min():.2f}"
+)
+
 
 st.subheader("Historical Closing Prices & Rolling Mean")
-df['20_MA'] = df['Price'].rolling(window=20).mean()
-st.line_chart(df[['Price', '20_MA']])
+
+df["20_MA"] = df["Price"].rolling(window=20).mean()
+
+st.line_chart(df[["Price", "20_MA"]])
+
 
 df_prophet = pd.DataFrame({
-    'ds': pd.to_datetime(df.index).tz_localize(None),
-    'y': df['Price'].values
+    "ds": pd.to_datetime(df.index).tz_localize(None),
+    "y": df["Price"].values
 })
+
 
 model = Prophet(
     weekly_seasonality=True,
     yearly_seasonality=True,
     daily_seasonality=False
 )
+
 model.fit(df_prophet)
 
-future = model.make_future_dataframe(periods=horizon, freq='B')
+
+future = model.make_future_dataframe(
+    periods=horizon,
+    freq="B"
+)
+
 forecast = model.predict(future)
 
+
 st.subheader("Forecast Data")
-st.write(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail())
+
+st.write(
+    forecast[
+        ["ds", "yhat", "yhat_lower", "yhat_upper"]
+    ].tail()
+)
+
 
 fig = model.plot(forecast)
+
 st.pyplot(fig)
 
-csv = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].to_csv(index=False)
+
+csv = forecast[
+    ["ds", "yhat", "yhat_lower", "yhat_upper"]
+].to_csv(index=False)
+
+
 st.download_button(
     label="Download Forecast CSV",
     data=csv,
