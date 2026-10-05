@@ -3,7 +3,8 @@ import yfinance as yf
 import pandas as pd
 from prophet import Prophet
 import matplotlib.pyplot as plt
-from datetime import date, timedelta
+from datetime import date
+import time
 
 st.set_page_config(
     page_title="Stock Price Forecasting App",
@@ -59,47 +60,54 @@ horizon = st.sidebar.slider(
 )
 
 
-@st.cache_data(ttl=86400, show_spinner="Downloading stock data...")
+@st.cache_data(ttl=86400, show_spinner=False)
 def download_stock_data(ticker):
-    end_date_download = date.today() + timedelta(days=1)
+    last_error = None
 
-    data = yf.download(
-        ticker,
-        start="2000-01-01",
-        end=end_date_download.strftime("%Y-%m-%d"),
-        progress=False,
-        auto_adjust=False,
-        threads=False
-    )
+    for attempt in range(3):
+        try:
+            data = yf.download(
+                ticker,
+                period="max",
+                interval="1d",
+                auto_adjust=False,
+                progress=False,
+                threads=False,
+                group_by="column",
+                multi_level_index=False
+            )
 
-    if data.empty:
-        return pd.DataFrame()
+            if data is not None and not data.empty:
+                if "Close" in data.columns:
+                    data = data[["Close"]].copy()
+                    data.columns = ["Price"]
 
-    if isinstance(data.columns, pd.MultiIndex):
-        if "Close" in data.columns.get_level_values(0):
-            data = data["Close"]
-            if isinstance(data, pd.DataFrame):
-                data = data.iloc[:, 0]
-        elif "Close" in data.columns.get_level_values(1):
-            data = data.xs("Close", axis=1, level=1)
-            if isinstance(data, pd.DataFrame):
-                data = data.iloc[:, 0]
-        else:
-            return pd.DataFrame()
-    elif "Close" in data.columns:
-        data = data["Close"]
-    else:
-        return pd.DataFrame()
+                    data.index = pd.to_datetime(data.index)
 
-    data = pd.DataFrame(data)
-    data.columns = ["Price"]
-    data.index = pd.to_datetime(data.index)
-    data["Price"] = pd.to_numeric(data["Price"], errors="coerce")
-    data = data.dropna()
-    data = data[~data.index.duplicated(keep="last")]
-    data = data.sort_index()
+                    if data.index.tz is not None:
+                        data.index = data.index.tz_localize(None)
 
-    return data
+                    data["Price"] = pd.to_numeric(
+                        data["Price"],
+                        errors="coerce"
+                    )
+
+                    data = data.dropna(subset=["Price"])
+                    data = data[~data.index.duplicated(keep="last")]
+                    data = data.sort_index()
+
+                    if not data.empty:
+                        return data
+
+            last_error = "Yahoo Finance returned no usable historical data."
+
+        except Exception as error:
+            last_error = str(error)
+
+        if attempt < 2:
+            time.sleep(2)
+
+    return pd.DataFrame()
 
 
 if start_date >= end_date:
@@ -107,50 +115,50 @@ if start_date >= end_date:
     st.stop()
 
 
-try:
-    all_data = download_stock_data(ticker)
-except Exception:
-    st.error(
-        "Unable to download stock data from Yahoo Finance right now. "
-        "Please try again later."
-    )
-    st.stop()
-
-
-if all_data.empty:
-    st.error("No historical data was found for the selected stock.")
-    st.stop()
-
-
-start_timestamp = pd.Timestamp(start_date)
-end_timestamp = pd.Timestamp(end_date)
-
-data = all_data[
-    (all_data.index >= start_timestamp) &
-    (all_data.index < end_timestamp)
-].copy()
+with st.spinner(f"Loading {ticker} historical data..."):
+    data = download_stock_data(ticker)
 
 
 if data.empty:
     st.error(
-        f"No trading data is available for {ticker} between "
-        f"{start_date.strftime('%Y-%m-%d')} and "
-        f"{end_date.strftime('%Y-%m-%d')}."
+        f"Yahoo Finance did not return historical data for {ticker}. "
+        "Please try this stock again later."
     )
     st.stop()
 
 
-if len(data) < 2:
+start_timestamp = pd.Timestamp(start_date)
+end_timestamp = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+
+df = data[
+    (data.index >= start_timestamp) &
+    (data.index < end_timestamp)
+].copy()
+
+
+if df.empty:
+    available_start = data.index.min().strftime("%Y-%m-%d")
+    available_end = data.index.max().strftime("%Y-%m-%d")
+
     st.error(
-        "The selected date range does not contain enough trading data "
-        "to generate a forecast."
+        f"No trading data is available for {ticker} in the selected date range. "
+        f"Available data: {available_start} to {available_end}."
     )
     st.stop()
 
 
-df = data.copy()
+if len(df) < 2:
+    st.error(
+        "The selected date range contains insufficient historical data "
+        "for forecasting. Please select a wider date range."
+    )
+    st.stop()
 
-df["20_MA"] = df["Price"].rolling(window=20, min_periods=1).mean()
+
+df["20_MA"] = df["Price"].rolling(
+    window=20,
+    min_periods=1
+).mean()
 
 
 col1, col2, col3 = st.columns(3)
@@ -193,6 +201,12 @@ df_prophet["y"] = pd.to_numeric(
 
 df_prophet = df_prophet.dropna()
 
+df_prophet = df_prophet.drop_duplicates(
+    subset=["ds"]
+)
+
+df_prophet = df_prophet.sort_values("ds")
+
 
 if len(df_prophet) < 2:
     st.error(
@@ -221,10 +235,12 @@ forecast = model.predict(future)
 
 st.subheader("Forecast Data")
 
+forecast_display = forecast[
+    ["ds", "yhat", "yhat_lower", "yhat_upper"]
+].tail(horizon)
+
 st.dataframe(
-    forecast[
-        ["ds", "yhat", "yhat_lower", "yhat_upper"]
-    ].tail(horizon),
+    forecast_display,
     use_container_width=True
 )
 
@@ -233,13 +249,17 @@ st.subheader("Prophet Forecast")
 
 fig = model.plot(forecast)
 
-st.pyplot(fig, clear_figure=True)
+st.pyplot(
+    fig,
+    clear_figure=True
+)
 
 
 csv = forecast[
     ["ds", "yhat", "yhat_lower", "yhat_upper"]
-].to_csv(index=False)
-
+].to_csv(
+    index=False
+)
 
 st.download_button(
     label="Download Forecast CSV",
