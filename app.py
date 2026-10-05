@@ -25,21 +25,15 @@ start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime("2020-01-0
 end_date = st.sidebar.date_input("End Date", value=pd.to_datetime("2024-01-01"))
 horizon = st.sidebar.slider("Forecast Horizon (days)", 7, 120, 90)
 
-data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+stock = yf.Ticker(ticker)
+data = stock.history(start=start_date.strftime("%Y-%m-%d"), end=end_date.strftime("%Y-%m-%d"))
 
 if data.empty:
     st.error("No data found for the selected stock and date range.")
     st.stop()
 
-if 'Close' in data:
-    close_data = data['Close']
-    if isinstance(close_data, pd.DataFrame):
-        close_data = close_data.iloc[:, 0]
-else:
-    st.error("Could not retrieve closing price data.")
-    st.stop()
-
-df = pd.DataFrame({'Price': close_data}).dropna()
+df = pd.DataFrame({'Price': data['Close'].values}, index=data.index)
+df = df.dropna()
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Current Price", f"${df['Price'].iloc[-1]:.2f}")
@@ -50,9 +44,10 @@ st.subheader("Historical Closing Prices & Rolling Mean")
 df['20_MA'] = df['Price'].rolling(window=20).mean()
 st.line_chart(df[['Price', '20_MA']])
 
-df_prophet = df['Price'].reset_index()
-df_prophet.columns = ['ds', 'y']
-df_prophet['ds'] = pd.to_datetime(df_prophet['ds']).dt.tz_localize(None)
+df_prophet = pd.DataFrame({
+    'ds': pd.to_datetime(df.index).tz_localize(None),
+    'y': df['Price'].values
+})
 
 model = Prophet(
     weekly_seasonality=True,
