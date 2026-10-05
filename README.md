@@ -45,8 +45,7 @@ The application supports the following stocks:
 
 ## Application Screenshot
 
-![Stock Price Forecasting App](<img width="1920" height="2330" alt="screencapture-hypgcwpr5xnmzgo5ehu2vm-streamlit-app-2026-10-05-12_49_30" src="https://github.com/user-attachments/assets/15312c8b-4436-486b-8177-9f98a03b6ed1" />
-)
+![Stock Price Forecasting App](https://github.com/user-attachments/assets/15312c8b-4436-486b-8177-9f98a03b6ed1)
 
 ## Application Workflow
 
