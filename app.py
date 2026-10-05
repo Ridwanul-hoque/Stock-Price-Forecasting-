@@ -27,12 +27,19 @@ horizon = st.sidebar.slider("Forecast Horizon (days)", 7, 120, 90)
 
 data = yf.download(ticker, start=start_date, end=end_date, progress=False)
 
-if isinstance(data.columns, pd.MultiIndex):
-    data.columns = data.columns.get_level_values(0)
+if data.empty:
+    st.error("No data found for the selected stock and date range.")
+    st.stop()
 
-df = data[['Close']].copy()
-df.columns = ['Price']
-df = df.dropna()
+if 'Close' in data:
+    close_data = data['Close']
+    if isinstance(close_data, pd.DataFrame):
+        close_data = close_data.iloc[:, 0]
+else:
+    st.error("Could not retrieve closing price data.")
+    st.stop()
+
+df = pd.DataFrame({'Price': close_data}).dropna()
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Current Price", f"${df['Price'].iloc[-1]:.2f}")
